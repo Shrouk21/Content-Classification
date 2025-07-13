@@ -1,8 +1,7 @@
-# augmentor.py
-
 import pandas as pd
 import numpy as np
 from sklearn.utils import resample
+from sklearn.model_selection import train_test_split
 from imblearn.over_sampling import SMOTE
 import nlpaug.augmenter.word as naw
 from collections import Counter
@@ -12,69 +11,67 @@ class DataAugmentor:
         self.df = df.copy()
         self.text_cols = text_cols
         self.label_col = label_col
-        self.augmented_df = None
 
-    def show_class_distribution(self):
-        counts = self.df[self.label_col].value_counts()
+    def show_class_distribution(self, df=None):
+        df = df if df is not None else self.df
+        counts = df[self.label_col].value_counts()
         print("Class Distribution:\n", counts)
 
-    def augment_text(self, method='synonym', num_augments_per_sample=1):
-        """
-        Applies synonym-based augmentation on minority classes.
-        """
+    def _augment_text(self, df, num_augments_per_sample=1):
         augmenter = naw.SynonymAug(aug_src='wordnet')
-
-        # Get class distribution
-        class_counts = self.df[self.label_col].value_counts()
+        class_counts = df[self.label_col].value_counts()
         max_count = class_counts.max()
-
         augmented_data = []
-        for cls in class_counts.index:
-            df_cls = self.df[self.df[self.label_col] == cls]
-            n_needed = max_count - len(df_cls)
 
+        for cls in class_counts.index:
+            df_cls = df[df[self.label_col] == cls]
+            n_needed = max_count - len(df_cls)
             if n_needed <= 0:
                 continue
-
             sampled = resample(df_cls, n_samples=n_needed, replace=True, random_state=42)
 
             for _, row in sampled.iterrows():
-                augmented_row = row.copy()
+                new_row = row.copy()
                 for col in self.text_cols:
-                    text = row[col]
-                    aug_text = augmenter.augment(text, n=num_augments_per_sample)
-                    augmented_row[col] = aug_text
-                augmented_data.append(augmented_row)
+                    try:
+                        new_row[col] = augmenter.augment(row[col])[0]
+                    except:
+                        new_row[col] = row[col]
+                augmented_data.append(new_row)
 
         augmented_df = pd.DataFrame(augmented_data)
-        self.augmented_df = pd.concat([self.df, augmented_df], ignore_index=True)
-        return self.augmented_df
+        return pd.concat([df, augmented_df], ignore_index=True)
 
-    def oversample(self):
-        """
-        Basic oversampling of minority classes without text modification.
-        """
-        max_size = self.df[self.label_col].value_counts().max()
-        lst = [self.df]
-        for class_index, group in self.df.groupby(self.label_col):
+    def _oversample(self, df):
+        max_size = df[self.label_col].value_counts().max()
+        lst = [df]
+        for _, group in df.groupby(self.label_col):
             samples_needed = max_size - len(group)
             if samples_needed > 0:
                 lst.append(group.sample(samples_needed, replace=True, random_state=42))
-        self.augmented_df = pd.concat(lst).sample(frac=1, random_state=42).reset_index(drop=True)
-        return self.augmented_df
+        return pd.concat(lst).sample(frac=1, random_state=42).reset_index(drop=True)
 
-    def apply_smote(self, vectorized_features, labels):
-        """
-        Apply SMOTE to vectorized (e.g., TF-IDF) features.
-        NOTE: Only use if you already have vectorized data.
-        """
-        sm = SMOTE(random_state=42)
-        X_res, y_res = sm.fit_resample(vectorized_features, labels)
-        return X_res, y_res
+    def augment_split(self, method='synonym', test_size=0.2, val_size=0.1):
+        df = self.df
+        y = df[self.label_col]
 
-    def save_augmented(self, path="augmented_train.csv"):
-        if self.augmented_df is not None:
-            self.augmented_df.to_csv(path, index=False)
-            print(f"Augmented training data saved to: {path}")
-        else:
-            print("No augmented data to save.")
+        # Split: train+val vs test
+        train_val_df, test_df = train_test_split(df, test_size=test_size, stratify=y, random_state=42)
+
+        # Adjust val_size to be a fraction of train+val
+        val_size_adjusted = val_size / (1 - test_size)
+        y_train_val = train_val_df[self.label_col]
+        train_df, val_df = train_test_split(train_val_df, test_size=val_size_adjusted, stratify=y_train_val, random_state=42)
+
+        print("Original Train Set Distribution:")
+        self.show_class_distribution(train_df)
+
+        if method == 'synonym':
+            train_df = self._augment_text(train_df)
+        elif method == 'oversample':
+            train_df = self._oversample(train_df)
+
+        print("Augmented Train Set Distribution:")
+        self.show_class_distribution(train_df)
+
+        return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)
