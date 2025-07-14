@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 from sklearn.utils import resample
 import nlpaug.augmenter.word as naw
-import nlpaug.augmenter.translation as nat
 
 class DataAugmentor:
     def __init__(self, text_cols=['query', 'image descriptions'], label_col='Toxic Category'):
@@ -15,15 +14,14 @@ class DataAugmentor:
         # Split into train/val/test using same logic as trainer
         y = df[self.label_col]
         train_val, test = train_test_split(df, test_size=test_size, stratify=y, random_state=42)
-        train, val = train_test_split(train_val, test_size=val_size / (1 - test_size),
-                                      stratify=train_val[self.label_col], random_state=42)
+        train, val = train_test_split(train_val, test_size=val_size / (1 - test_size), stratify=train_val[self.label_col], random_state=42)
 
         if method == 'synonym':
             train = self._synonym_augment(train)
         elif method == 'oversample':
             train = self._oversample(train)
-        elif method == 'backtranslate':
-            train = self._backtranslate_augment(train)
+        elif method == 'back_translate':
+            train = self._back_translate_augment(train)
         else:
             raise ValueError(f"Unsupported method: {method}")
 
@@ -55,8 +53,17 @@ class DataAugmentor:
         augmented_df = pd.DataFrame(augmented_data)
         return pd.concat([df, augmented_df], ignore_index=True)
 
-    def _backtranslate_augment(self, df):
-        augmenter = nat.BackTranslationAug(
+    def _oversample(self, df):
+        max_size = df[self.label_col].value_counts().max()
+        all_dfs = [df]
+        for cls, group in df.groupby(self.label_col):
+            needed = max_size - len(group)
+            if needed > 0:
+                all_dfs.append(group.sample(needed, replace=True, random_state=42))
+        return pd.concat(all_dfs).sample(frac=1, random_state=42).reset_index(drop=True)
+
+    def _back_translate_augment(self, df):
+        augmenter = naw.BackTranslationAug(
             from_model_name='facebook/wmt19-en-de',
             to_model_name='facebook/wmt19-de-en'
         )
@@ -81,12 +88,3 @@ class DataAugmentor:
 
         augmented_df = pd.DataFrame(augmented_data)
         return pd.concat([df, augmented_df], ignore_index=True)
-
-    def _oversample(self, df):
-        max_size = df[self.label_col].value_counts().max()
-        all_dfs = [df]
-        for cls, group in df.groupby(self.label_col):
-            needed = max_size - len(group)
-            if needed > 0:
-                all_dfs.append(group.sample(needed, replace=True, random_state=42))
-        return pd.concat(all_dfs).sample(frac=1, random_state=42).reset_index(drop=True)
