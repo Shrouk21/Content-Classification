@@ -8,7 +8,7 @@ class DataAugmentor:
         self.text_cols = text_cols
         self.label_col = label_col
 
-    def augment_df(self, df, method='synonym', val_size=0.1, test_size=0.2, device='cpu'):
+    def augment_df(self, df, method='synonym', val_size=0.1, test_size=0.2):
         from sklearn.model_selection import train_test_split
 
         # Split into train/val/test using same logic as trainer
@@ -17,11 +17,11 @@ class DataAugmentor:
         train, val = train_test_split(train_val, test_size=val_size / (1 - test_size), stratify=train_val[self.label_col], random_state=42)
 
         if method == 'synonym':
-            train = self._synonym_augment(train, device=device)
+            train = self._synonym_augment(train)
         elif method == 'oversample':
             train = self._oversample(train)
         elif method == 'back_translate':
-            train = self._back_translate_augment(train, device=device)
+            train = self._back_translate_augment(train)
         else:
             raise ValueError(f"Unsupported method: {method}")
 
@@ -29,8 +29,8 @@ class DataAugmentor:
         final_df = pd.concat([train, val, test], ignore_index=True)
         return final_df
 
-    def _synonym_augment(self, df, device='cpu'):
-        augmenter = naw.SynonymAug(aug_src='wordnet', device=device)
+    def _synonym_augment(self, df):
+        augmenter = naw.SynonymAug(aug_src='wordnet')
         class_counts = df[self.label_col].value_counts()
         max_count = class_counts.max()
         augmented_data = []
@@ -62,11 +62,10 @@ class DataAugmentor:
                 all_dfs.append(group.sample(needed, replace=True, random_state=42))
         return pd.concat(all_dfs).sample(frac=1, random_state=42).reset_index(drop=True)
 
-    def _back_translate_augment(self, df, device='cpu'):
+    def _back_translate_augment(self, df):
         augmenter = naw.BackTranslationAug(
             from_model_name='facebook/wmt19-en-de',
-            to_model_name='facebook/wmt19-de-en',
-            device='cuda'
+            to_model_name='facebook/wmt19-de-en'
         )
         class_counts = df[self.label_col].value_counts()
         max_count = class_counts.max()
