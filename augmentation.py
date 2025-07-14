@@ -66,7 +66,7 @@ class DataAugmentor:
         augmenter = naw.BackTranslationAug(
             from_model_name='facebook/wmt19-en-de',
             to_model_name='facebook/wmt19-de-en',
-            device=device
+            device='cuda'
         )
         class_counts = df[self.label_col].value_counts()
         max_count = class_counts.max()
