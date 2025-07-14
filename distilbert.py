@@ -140,4 +140,23 @@ class DistilBertLoRATrainer:
         plt.xlabel("Predicted"); plt.ylabel("True"); plt.title("Confusion Matrix")
         plt.show()
 
+    def predict(self, text_a, text_b=None):
+        self.model.eval()
+        if text_b is not None:
+            inputs = self.tokenizer([text_a], [text_b], truncation=True, padding='max_length', max_length=self.max_len, return_tensors='pt')
+        else:
+            # If only one input, pass empty string for second input
+            inputs = self.tokenizer([text_a], [""], truncation=True, padding='max_length', max_length=self.max_len, return_tensors='pt')
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            pred = outputs.logits.argmax(dim=1).item()
+        return self.label_encoder.inverse_transform([pred])[0]
+
+    def load_best_model(self, path="best_model.pt"):
+        self.model.load_state_dict(torch.load(path, map_location=device))
+        self.model.eval()
+
+
+
 
