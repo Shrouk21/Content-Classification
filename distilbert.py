@@ -57,6 +57,7 @@ class DistilBertLoRATrainer:
         val_loader = DataLoader(self.val_data, batch_size=batch_size)
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr)
 
+        best_val_acc = 0
         for epoch in range(epochs):
             self.model.train()
             total_loss, total_correct = 0, 0
@@ -75,6 +76,11 @@ class DistilBertLoRATrainer:
             train_loss = total_loss / len(train_loader)
             train_acc = total_correct / len(self.train_data)
             val_loss, val_acc = self.evaluate(val_loader, mode="val")
+
+            # Save best model
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                torch.save(self.model.state_dict(), "best_model.pt")
 
             self.train_losses.append(train_loss)
             self.train_accs.append(train_acc)
