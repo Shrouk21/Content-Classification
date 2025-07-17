@@ -151,7 +151,8 @@ class DistilBertLoRATrainer:
         with torch.no_grad():
             outputs = self.model(**inputs)
             pred = outputs.logits.argmax(dim=1).item()
-        return self.label_encoder.inverse_transform([pred])[0]
+            confidence = F.softmax(outputs.logits, dim=1).max().item()
+        return self.label_encoder.inverse_transform([pred])[0], confidence
 
     def load_best_model(self, path="best_model.pt"):
         self.model.load_state_dict(torch.load(path, map_location=device))

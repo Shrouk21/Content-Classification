@@ -16,8 +16,8 @@ import torch
 from collections import Counter
 from torch.nn.utils.rnn import pad_sequence
 
-nltk.download('stopwords')
-nltk.download('wordnet')
+# nltk.download('stopwords', quite=True)
+# nltk.download('wordnet', quite=True)
 
 class PyTorchTokenizer:
     """Custom tokenizer for PyTorch"""
