@@ -1,28 +1,32 @@
-import nltk
-import streamlit as st
 import pandas as pd
 from PIL import Image
 import torch
-from transformers import BlipProcessor, BlipForConditionalGeneration
+from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
 from distilbert import DistilBertLoRATrainer
 from augmentation import DataAugmentor
 import io
 import base64
+import nltk
+import streamlit as st
 
 # Initialize session state
 if 'model_loaded' not in st.session_state:
     st.session_state.model_loaded = False
-    st.session_state.blip_model = None
-    st.session_state.blip_processor = None
+    st.session_state.caption_model = None
+    st.session_state.feature_extractor = None
+    st.session_state.tokenizer = None
     st.session_state.trainer = None
 
 @st.cache_resource
 def load_models():
-    """Load BLIP model and DistilBERT trainer"""
+    """Load lightweight ViT-GPT2 model and DistilBERT trainer"""
     try:
-        # Load BLIP model for image captioning
-        blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-        blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+        # Load lightweight ViT-GPT2 model for image captioning (~1GB)
+        model_name = "nlpconnect/vit-gpt2-image-captioning"
+        
+        caption_model = VisionEncoderDecoderModel.from_pretrained(model_name)
+        feature_extractor = ViTImageProcessor.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
         
         # Load data and prepare DistilBERT model
         df = pd.read_csv("cellula toxic data.csv")
@@ -33,22 +37,28 @@ def load_models():
         trainer.prepare_data(aug_df, col_a="image descriptions", col_b="query", label_col="Toxic Category")
         trainer.load_best_model(path='best_model.pt')
         
-        return blip_processor, blip_model, trainer, aug_df['Toxic Category'].unique()
+        return caption_model, feature_extractor, tokenizer, trainer, aug_df['Toxic Category'].unique()
     except Exception as e:
         st.error(f"Error loading models: {str(e)}")
-        return None, None, None, None
+        return None, None, None, None, None
 
-def generate_image_caption(image, processor, model):
-    """Generate caption for uploaded image using BLIP"""
+def generate_image_caption(image, model, feature_extractor, tokenizer):
+    """Generate caption for uploaded image using ViT-GPT2"""
     try:
         # Process image
-        inputs = processor(image, return_tensors="pt")
+        pixel_values = feature_extractor(images=image, return_tensors="pt").pixel_values
         
         # Generate caption
         with torch.no_grad():
-            out = model.generate(**inputs, max_length=50, num_beams=5)
+            output_ids = model.generate(
+                pixel_values, 
+                max_length=50, 
+                num_beams=1,
+                early_stopping=True,
+                pad_token_id=tokenizer.pad_token_id
+            )
         
-        caption = processor.decode(out[0], skip_special_tokens=True)
+        caption = tokenizer.decode(output_ids[0], skip_special_tokens=True)
         return caption
     except Exception as e:
         st.error(f"Error generating caption: {str(e)}")
@@ -89,11 +99,12 @@ def main():
     # Load models
     if not st.session_state.model_loaded:
         with st.spinner("Loading models... This may take a moment."):
-            processor, blip_model, trainer, categories = load_models()
+            caption_model, feature_extractor, tokenizer, trainer, categories = load_models()
             
-            if processor and blip_model and trainer:
-                st.session_state.blip_processor = processor
-                st.session_state.blip_model = blip_model
+            if caption_model and feature_extractor and tokenizer and trainer:
+                st.session_state.caption_model = caption_model
+                st.session_state.feature_extractor = feature_extractor
+                st.session_state.tokenizer = tokenizer
                 st.session_state.trainer = trainer
                 st.session_state.categories = categories
                 st.session_state.model_loaded = True
@@ -102,76 +113,80 @@ def main():
                 st.error("Failed to load models. Please check your model files.")
                 return
     
-    # Create two columns for layout
-    col1, col2 = st.columns([1, 1])
+    # Input Section
+    st.header("📝 Input Options")
     
-    with col1:
-        st.header("📝 Input Options")
-        
-        # Input method selection
-        input_method = st.radio(
-            "Choose input method:",
-            ["Text Input", "Image Upload"],
-            horizontal=True
+    # Input method selection
+    input_method = st.radio(
+        "Choose input method:",
+        ["Text Input", "Image Upload"],
+        horizontal=True
+    )
+    
+    text_to_classify = ""
+    
+    if input_method == "Text Input":
+        st.subheader("Enter Text")
+        text_to_classify = st.text_area(
+            "Enter your text for classification:",
+            height=150,
+            placeholder="Type or paste your text here..."
         )
         
-        text_to_classify = ""
+    elif input_method == "Image Upload":
+        st.subheader("Upload Image")
+        uploaded_file = st.file_uploader(
+            "Choose an image file",
+            type=['png', 'jpg', 'jpeg', 'gif'],
+            help="Supported formats: PNG, JPG, JPEG, GIF (max 10MB)"
+        )
         
-        if input_method == "Text Input":
-            st.subheader("Enter Text")
-            text_to_classify = st.text_area(
-                "Enter your text for classification:",
-                height=150,
-                placeholder="Type or paste your text here..."
-            )
+        if uploaded_file is not None:
+            # Validate image
+            is_valid, result = validate_image(uploaded_file)
             
-        elif input_method == "Image Upload":
-            st.subheader("Upload Image")
-            uploaded_file = st.file_uploader(
-                "Choose an image file",
-                type=['png', 'jpg', 'jpeg', 'gif'],
-                help="Supported formats: PNG, JPG, JPEG, GIF (max 10MB)"
-            )
-            
-            if uploaded_file is not None:
-                # Validate image
-                is_valid, result = validate_image(uploaded_file)
+            if is_valid:
+                image = result
                 
-                if is_valid:
-                    image = result
-                    
-                    # Display uploaded image
-                    st.image(image, caption="Uploaded Image", use_column_width=True)
-                    
-                    # Generate caption
-                    with st.spinner("Generating image caption..."):
-                        caption = generate_image_caption(
-                            image, 
-                            st.session_state.blip_processor, 
-                            st.session_state.blip_model
-                        )
-                    
-                    if caption:
-                        st.success("Caption generated successfully!")
-                        st.info(f"**Generated Caption:** {caption}")
-                        text_to_classify = caption
-                    else:
-                        st.error("Failed to generate caption.")
+                # Display uploaded image
+                st.image(image, caption="Uploaded Image", use_column_width=True)
+                
+                # Generate caption
+                with st.spinner("Generating image caption..."):
+                    caption = generate_image_caption(
+                        image, 
+                        st.session_state.caption_model,
+                        st.session_state.feature_extractor,
+                        st.session_state.tokenizer
+                    )
+                
+                if caption:
+                    st.success("Caption generated successfully!")
+                    st.info(f"**Generated Caption:** {caption}")
+                    text_to_classify = caption
                 else:
-                    st.error(result)
+                    st.error("Failed to generate caption.")
+            else:
+                st.error(result)
+
+    st.markdown("---")  # Separator between sections
+
+    # Classification Results Section
+    st.header("🔍 Classification Results")
     
-    with col2:
-        st.header("🔍 Classification Results")
-        
-        if text_to_classify:
-            with st.spinner("Classifying content..."):
-                try:
-                    # Get prediction
-                    prediction = st.session_state.trainer.predict(text_a=text_to_classify)
-                    
-                    # Display results
-                    st.subheader("Classification Result")
-                    
+    if text_to_classify:
+        with st.spinner("Classifying content..."):
+            try:
+                # Get prediction with confidence scores
+                prediction, confidence = st.session_state.trainer.predict(text_a=text_to_classify)
+                
+                # Display results with confidence
+                st.subheader("Classification Result")
+                
+                # Create two columns for prediction and confidence
+                pred_col, conf_col = st.columns([3, 1])
+                
+                with pred_col:
                     # Create colored alert based on toxicity category
                     if prediction.lower() == 'safe':
                         st.success(f"✅ **Content is Safe**: {prediction}")
@@ -187,28 +202,33 @@ def main():
                         st.warning(f"❓ **UNKNOWN TYPE - {prediction}**: Content classification uncertain")
                     else:
                         st.info(f"ℹ️ **Classification**: {prediction}")
+                
+                with conf_col:
+                    # Display confidence as percentage with progress bar
+                    st.metric("Confidence", f"{confidence:.1%}")
+                    st.progress(float(confidence))
+
+                # Show input text for reference
+                st.subheader("Analyzed Text")
+                st.text_area("", value=text_to_classify, height=100, disabled=True)
+                
+                # Additional info
+                with st.expander("ℹ️ More Information"):
+                    st.write("**Available Categories:**")
+                    for category in st.session_state.categories:
+                        st.write(f"• {category}")
                     
-                    # Show input text for reference
-                    st.subheader("Analyzed Text")
-                    st.text_area("", value=text_to_classify, height=100, disabled=True)
-                    
-                    # Additional info
-                    with st.expander("ℹ️ More Information"):
-                        st.write("**Available Categories:**")
-                        for category in st.session_state.categories:
-                            st.write(f"• {category}")
-                        
-                        st.write("**How it works:**")
-                        if input_method == "Image Upload":
-                            st.write("1. Image is processed using BLIP model to generate a text caption")
-                            st.write("2. Caption is analyzed by DistilBERT model for toxicity classification")
-                        else:
-                            st.write("1. Text is directly analyzed by DistilBERT model for toxicity classification")
-                        
-                except Exception as e:
-                    st.error(f"Error during classification: {str(e)}")
-        else:
-            st.info("👆 Please enter text or upload an image to classify.")
+                    st.write("**How it works:**")
+                    if input_method == "Image Upload":
+                        st.write("1. Image is processed using lightweight ViT-GPT2 model (~1GB)")
+                        st.write("2. Caption is analyzed by DistilBERT model for toxicity classification")
+                    else:
+                        st.write("1. Text is directly analyzed by DistilBERT model for toxicity classification")
+                
+            except Exception as e:
+                st.error(f"Error during classification: {str(e)}")
+    else:
+        st.info("👆 Please enter text or upload an image to classify.")
     
     # Footer
     st.markdown("---")
