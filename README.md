@@ -8,7 +8,7 @@ A multi-modal AI pipeline designed for **toxic content moderation**. The system 
 
 ## 📌 Overview
 
-This project involves building, training, evaluating, and deploying a deep learning-based classifier that flags harmful, unsafe, or sensitive content. It supports **text input** and **image-to-caption** analysis using **BLIP** for classification.
+This project involves building, training, evaluating, and deploying a deep learning-based classifier that flags harmful, unsafe, or sensitive content. It supports **text input** and **image-to-caption** analysis using **ViT** for classification.
 
 ---
 
@@ -105,7 +105,7 @@ Test Accuracy: 0.9735
 The final model was deployed using **Streamlit** with the following features:
 
 * 📤 **Text or Image Input**
-* 📸 **BLIP Caption Generator** (for image-to-text)
+* 📸 **ViT-GPT2 Caption Generator** (for image-to-text)
 * 🧠 **DistilBERT Classifier with PEFT LoRA**
 * 📊 **Dynamic category-based alerts**
 * 📋 **Expandable explanation section**
